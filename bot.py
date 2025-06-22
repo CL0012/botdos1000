@@ -1,15 +1,16 @@
-from telethon.sync import TelegramClient, events
+from telethon import TelegramClient, events
 import re
 import json
 import os
+import asyncio
 from datetime import datetime
 
 # ==== CONFIGURAÇÕES INICIAIS ====
 api_id = 23565949
 api_hash = '5ffa446ffd412847ac9ffd654c88e6cd'
 session_name = 'Botdos1000'
-grupo_origem = 'FTVIPLucasTyLty'  # <-- Coloque o @username ou ID numérico do grupo
-grupo_destino = 'https://t.me/linkeyeudy'
+grupo_origem = 'FTVIPLucasTyLty'  # Nome ou ID do grupo origem
+grupo_destino = 'https://t.me/linkeyeudy'  # Grupo destino
 
 # ==== FUNÇÕES AUXILIARES ====
 
@@ -57,55 +58,56 @@ def dentro_do_horario():
     agora = datetime.now().hour
     return 9 <= agora <= 23
 
-# ==== BOT INICIADO ====
+# ==== FUNÇÃO PRINCIPAL ====
 
-client = TelegramClient(session_name, api_id, api_hash)
-client.start()
+async def main():
+    client = TelegramClient(session_name, api_id, api_hash)
+    await client.start()
 
-@client.on(events.NewMessage(chats=grupo_origem))
-async def handler(event):
-    if not dentro_do_horario():
-        return
-
-    mensagem = event.message.message
-    msg_id = event.message.id
-
-    # === NOVO FORMATO: TIP ENCONTRADA ===
-    if "TIP ENCONTRADA" in mensagem.upper():
-        links = re.findall(r'(https?://[^\s,]+)', mensagem)
-        unidades_match = re.search(r'Unidade[s]*[:：]\s*(\d+)', mensagem)
-        tipo_match = re.search(r'Tipo de Aposta[:：]\s*(.*)', mensagem)
-
-        if links and unidades_match and tipo_match:
-            unidades = float(unidades_match.group(1))
-            tipo = tipo_match.group(1).strip()
-            banca = carregar_banca()
-            valor_aposta = calcular_valor_aposta(unidades, banca)
-
-            texto = f"🎯 Tip detectada\n\n"
-            texto += f"💰 Stake: {unidades} unidade(s) (R${valor_aposta:.2f})\n"
-            texto += f"⚽ Tipo: {tipo}\n\n"
-            texto += "🔗 Link(s):\n"
-            for link in links:
-                texto += f"- {link}\n"
-            texto += "\n*Jogue com responsabilidade ✅*"
-
-            await client.send_message(grupo_destino, texto)
-            salvar_tip(msg_id, valor_aposta)
+    @client.on(events.NewMessage(chats=grupo_origem))
+    async def handler(event):
+        if not dentro_do_horario():
             return
 
-    # === ANTIGO FORMATO: texto com unidade + link ===
-    if 'unidade' in mensagem.lower():
-        match_link = re.search(r'(https?://[^\s]+)', mensagem)
-        match_unidades = re.search(r'(\d+(?:,\d+)?)\s*unidade', mensagem.lower())
+        mensagem = event.message.message
+        msg_id = event.message.id
 
-        if match_link and match_unidades:
-            link = match_link.group(1)
-            unidades = float(match_unidades.group(1).replace(',', '.'))
-            banca = carregar_banca()
-            valor_aposta = calcular_valor_aposta(unidades, banca)
+        # === NOVO FORMATO: TIP ENCONTRADA ===
+        if "TIP ENCONTRADA" in mensagem.upper():
+            links = re.findall(r'(https?://[^\s,]+)', mensagem)
+            unidades_match = re.search(r'Unidade[s]*[:：]\s*(\d+)', mensagem)
+            tipo_match = re.search(r'Tipo de Aposta[:：]\s*(.*)', mensagem)
 
-            texto = f"""💸 *TIP IDENTIFICADA!*
+            if links and unidades_match and tipo_match:
+                unidades = float(unidades_match.group(1))
+                tipo = tipo_match.group(1).strip()
+                banca = carregar_banca()
+                valor_aposta = calcular_valor_aposta(unidades, banca)
+
+                texto = f"🎯 Tip detectada\n\n"
+                texto += f"💰 Stake: {unidades} unidade(s) (R${valor_aposta:.2f})\n"
+                texto += f"⚽ Tipo: {tipo}\n\n"
+                texto += "🔗 Link(s):\n"
+                for link in links:
+                    texto += f"- {link}\n"
+                texto += "\n*Jogue com responsabilidade ✅*"
+
+                await client.send_message(grupo_destino, texto)
+                salvar_tip(msg_id, valor_aposta)
+                return
+
+        # === ANTIGO FORMATO: texto com unidade + link ===
+        if 'unidade' in mensagem.lower():
+            match_link = re.search(r'(https?://[^\s]+)', mensagem)
+            match_unidades = re.search(r'(\d+(?:,\d+)?)\s*unidade', mensagem.lower())
+
+            if match_link and match_unidades:
+                link = match_link.group(1)
+                unidades = float(match_unidades.group(1).replace(',', '.'))
+                banca = carregar_banca()
+                valor_aposta = calcular_valor_aposta(unidades, banca)
+
+                texto = f"""💸 *TIP IDENTIFICADA!*
 
 🎯 Link: {link}
 📌 Unidades: {unidades}
@@ -114,35 +116,35 @@ async def handler(event):
 
 ⏱ Aguarde o resultado...
 """
-            await client.send_message(grupo_destino, texto, parse_mode='markdown')
-            salvar_tip(msg_id, valor_aposta)
+                await client.send_message(grupo_destino, texto, parse_mode='markdown')
+                salvar_tip(msg_id, valor_aposta)
 
-    elif any(resultado in mensagem.lower() for resultado in ['green', 'red', 'reembolso']):
-        resultado = mensagem.lower()
-        valor_apostado = carregar_tip(msg_id)
-        if valor_apostado is None:
-            return
+        elif any(resultado in mensagem.lower() for resultado in ['green', 'red', 'reembolso']):
+            resultado = mensagem.lower()
+            valor_apostado = carregar_tip(msg_id)
+            if valor_apostado is None:
+                return
 
-        banca = carregar_banca()
+            banca = carregar_banca()
 
-        if 'green' in resultado:
-            lucro = valor_apostado * 0.8
-            banca += lucro
-            msg = f'✅ GREEN — +R${lucro:.2f}\n💰 Nova banca: R${banca:.2f}'
-        elif 'red' in resultado:
-            banca -= valor_apostado
-            msg = f'❌ RED — -R${valor_apostado:.2f}\n💰 Nova banca: R${banca:.2f}'
-        elif 'reembolso' in resultado:
-            msg = f'🔄 REEMBOLSO — sem alteração\n💰 Banca: R${banca:.2f}'
-        else:
-            return
+            if 'green' in resultado:
+                lucro = valor_apostado * 0.8
+                banca += lucro
+                msg = f'✅ GREEN — +R${lucro:.2f}\n💰 Nova banca: R${banca:.2f}'
+            elif 'red' in resultado:
+                banca -= valor_apostado
+                msg = f'❌ RED — -R${valor_apostado:.2f}\n💰 Nova banca: R${banca:.2f}'
+            elif 'reembolso' in resultado:
+                msg = f'🔄 REEMBOLSO — sem alteração\n💰 Banca: R${banca:.2f}'
+            else:
+                return
 
-        await client.send_message(grupo_destino, msg)
-        salvar_banca(banca)
-        remover_tip(msg_id)
+            await client.send_message(grupo_destino, msg)
+            salvar_banca(banca)
+            remover_tip(msg_id)
 
-# ==== EXECUTAR BOT ====
-
-with client:
     print("🤖 Bot em tempo real iniciado.")
-    client.run_until_disconnected()
+    await client.run_until_disconnected()
+
+# ==== INICIAR ====
+asyncio.run(main())
